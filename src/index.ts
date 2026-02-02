@@ -12,6 +12,8 @@ export * from './core/index.js';
 export * from './channels/base/index.js';
 export * from './channels/qq/index.js';
 export * from './channels/feishu/index.js';
+export * from './channels/wecom/index.js';
+export * from './channels/wechat/index.js';
 
 // 导出 Web UI
 export * from './ui/index.js';
