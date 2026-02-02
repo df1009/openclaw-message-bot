@@ -18,10 +18,12 @@ export interface FeishuConfig extends BaseChannelConfig {
   dmPolicy?: 'open' | 'pairing' | 'allowlist' | 'disabled';
   /** 群聊策略 */
   groupPolicy?: 'open' | 'allowlist' | 'disabled';
-  /** 允许的用户列表 */
+  /** 允许的用户列表 (Open ID) */
   allowFrom?: string[];
-  /** 群聊允许列表 */
+  /** 群聊允许列表 (Chat ID) */
   groupAllowFrom?: string[];
+  /** 群聊中是否需要 @ 才响应 */
+  requireMention?: boolean;
   /** 是否启用流式消息（打字效果） */
   streaming?: boolean;
   /** 文本分块限制 */

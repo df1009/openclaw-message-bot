@@ -8,6 +8,7 @@
  * - 自动重连和错误恢复
  * - 图片和富媒体支持
  * - Token 自动刷新
+ * - 每个用户独立会话
  */
 
 import type {
@@ -49,6 +50,10 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
     
     const { appId, clientSecret } = this.config;
     
+    if (!clientSecret) {
+      throw new Error('缺少 clientSecret 配置');
+    }
+    
     // 初始化 API 客户端
     this.api = new QQApi(appId, clientSecret);
     
@@ -62,15 +67,15 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
       },
       onConnected: () => {
         this.setConnected(true);
-        this.logger.info('WebSocket 已连接');
+        this.logger.info('QQ WebSocket 已连接');
       },
       onDisconnected: () => {
         this.setConnected(false);
-        this.logger.warn('WebSocket 已断开');
+        this.logger.warn('QQ WebSocket 已断开');
       },
       onError: (error) => {
         this.setError(error.message);
-        this.logger.error(`网关错误: ${error.message}`);
+        this.logger.error(`QQ 网关错误: ${error.message}`);
       },
       logger: this.logger,
     });
@@ -120,6 +125,8 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
       raw: event,
     };
     
+    this.logger.info(`收到消息: [${message.chatType}] ${message.senderId}: ${message.content.text?.substring(0, 50)}...`);
+    
     // 分发消息
     await this.dispatchMessage(message);
   }
@@ -138,27 +145,40 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
     
     try {
       // 解析目标类型
-      const [type, id] = target.includes(':') 
-        ? target.split(':') 
-        : ['user', target];
+      // 格式: user:xxx, group:xxx, channel:xxx
+      let type: 'user' | 'group' | 'channel' = 'user';
+      let id = target;
+      
+      if (target.includes(':')) {
+        const [t, i] = target.split(':');
+        if (t === 'user' || t === 'group' || t === 'channel') {
+          type = t;
+          id = i;
+        }
+      }
       
       let messageId: string | undefined;
       
       // 发送文本
       if (content.text) {
-        const result = await this.api.sendMessage(type as any, id, content.text, options?.replyTo);
+        const result = await this.api.sendMessage(type, id, content.text, options?.replyTo);
         messageId = result.id;
       }
       
       // 发送图片
-      if (content.images?.length) {
-        for (const imageUrl of content.images) {
-          await this.api.sendImage(type as any, id, imageUrl.replyTo);
+      if (content.images?.length && type !== 'channel') {
+        for (const imageUrl nt.images) {
+          try {
+            await this.api.sendImage(type as 'user' | 'group', id, imageUrl, options?.replyTo);
+          } catch (err) {
+            this.logger.error(`发送图片失败: ${err}`);
+          }
         }
       }
       
       return { success: true, messageId };
     } catch (err) {
+      this.logger.error(`发送消息失败: ${err}`);
       return { success: false, error: String(err) };
     }
   }
@@ -171,9 +191,8 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
       type: 'object',
       properties: {
         enabled: {
-          type: 'boolean',
-          description: '是否启用',
-          default: true,
+          type: 'boole         description: '是否启用',
+    default: true,
         },
         appId: {
           type: 'string',
@@ -183,7 +202,7 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
         clientSecret: {
           type: 'string',
           description: 'QQ 机器人 AppSecret',
-          required: tru
+          required: true,
           sensitive: true,
         },
         imageServerBaseUrl: {
@@ -211,7 +230,7 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
     
     const cfg = config as Record<string, unknown>;
     
-    if (!cfg.appId || cfg.appId !== 'string') {
+    if (!cfg.appId || typeof cfg.appId !== 'string') {
       errors.push('appId 是必填项');
     }
     
@@ -223,5 +242,19 @@ export class QQAdapter extends BaseAdapter<QQConfig> {
       valid: errors.length === 0,
       errors,
     };
+  }
+  
+  /**
+   * 获取 API 客户端
+   */
+  getApi(): QQApi | null {
+    return this.api;
+  }
+  
+  /**
+   * 获取网关
+   */
+  getGateway(): QQGateway | null {
+    return this.gateway;
   }
 }

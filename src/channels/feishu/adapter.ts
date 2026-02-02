@@ -8,6 +8,7 @@
  * - 支持图片和文件
  * - 支持流式消息（打字效果）
  * - 访问控制（白名单、配对）
+ * - 基于官方 SDK (@larksuiteoapi/node-sdk)
  */
 
 import type {
@@ -21,7 +22,6 @@ import type {
 } from '../../core/types.js';
 import { BaseAdapter } from '../base/adapter.js';
 import type { FeishuConfig } from './types.js';
-import { FeishuApi } from './api.js';
 import { FeishuWsClient } from './client.js';
 
 /**
@@ -36,7 +36,6 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
     icon: '📱',
   };
   
-  private api: FeishuApi | null = null;
   private client: FeishuWsClient | null = null;
   
   /**
@@ -52,9 +51,6 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
     if (!appSecret) {
       throw new Error('缺少 appSecret 配置');
     }
-    
-    // 初始化 API 客户端
-    this.api = new FeishuApi(appId, appSecret);
     
     // 初始化 WebSocket 客户端
     this.client = new FeishuWsClient({
@@ -88,14 +84,13 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       await this.client.stop();
       this.client = null;
     }
-    this.api = null;
   }
   
   /**
    * 处理收到的消息
    */
   private async handleMessage(event: {
-    type: 'dm' | 'group';
+    type:'group';
     senderId: string;
     senderName?: string;
     chatId: string;
@@ -112,10 +107,13 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       return;
     }
     
-    // 群聊中检查是否被 @
-    if (event.type === 'group' && !event.mentioned) {
-      this.logger.debug('群聊消息未 @，跳过');
-      return;
+    // 群聊中检查是否被 @（可配置）
+    if (event.type === 'group') {
+      const requireMention = this.config?.requireMention !== false;
+      if (requireMention && !event.mentioned) {
+        this.logger.debug('群聊消息未 @，跳过');
+        return;
+      }
     }
     
     // 构建标准消息格式
@@ -132,7 +130,7 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
           ?.filter(a => a.type === 'image' && a.localPath)
           .map(a => a.localPath!),
       },
-imestamp: event.timestamp,
+      timestamp: event.timestamp,
       mentioned: event.mentioned,
       raw: event,
     };
@@ -156,7 +154,7 @@ imestamp: event.timestamp,
       if (dmPolicy === 'allowlist' && allowFrom?.length) {
         return allowFrom.includes(event.senderId);
       }
-      // pairing 模式需要额外处理
+      // pairing 模式：允许所有人，但需要配对确认
       return true;
     } else {
       // 群聊访问控制
@@ -177,12 +175,13 @@ imestamp: event.timestamp,
     content: MessageContent,
     options?: SendOptions
   ): Promise<SendResult> {
-    if (!this.api) {
-      return { success: false, error: 'API 未初始化' };
+    if (!this.client) {
+      return { success: false, error: '客户端未初始化' };
     }
     
     try {
       // 解析目标类型
+      // 格式: open_id 或 chat:chat_id
       const isChat = target.startsWith('oc_') || target.startsWith('chat:');
       const receiveIdType = isChat ? 'chat_id' : 'open_id';
       const receiveId = target.replace('chat:', '');
@@ -191,21 +190,34 @@ imestamp: event.timestamp,
       
       // 发送文本
       if (content.text) {
-        const result = await this.api.sendText(receiveId, content.text, receiveIdType);
-        messageId = result.message_id;
+        // 如果有 replyTo，使用回复
+        if (options?.replyTo) {
+          const result = await this.client.replyText(options.replyTo, content.text);
+          messageId = result.messageId;
+        } else {
+          const result = await this.client.sendText(receiveId, content.text, receiveIdType);
+          messageId = result.messageId;
+        }
       }
       
       // 发送图片
       if (content.images?.length) {
         for (const imagePath of content.images) {
           // 如果是本地路径，需要先上传
-          // 这里简化处理，假设是 image_key
-          await this.api.sendImage(receiveId, imagePath, receiveIdType);
+          if (imagePath.startsWith('/') || imagePath.startsWith('.')) {
+            const fs = await import('node:fs');
+            const buffer = fs.readFileSync(imagePa       const imageKey = await this.client.uploadImage(buffer);
+            await this.client.sendImage(receiveId, imageKey, receiveIdType);
+          } else {
+            // 假设是 image_key
+            await this.client.sendImage(receiveId, imagePath, receiveIdType);
+          }
         }
       }
       
       return { success: true, messageId };
     } catch (err) {
+      this.logger.error(`发送消息失败: ${err}`);
       return { success: false, error: String(err) };
     }
   }
@@ -218,7 +230,7 @@ imestamp: event.timestamp,
       type: 'object',
       properties: {
         enabled: {
-          type: 'boolean',
+          typ'boolean',
           description: '是否启用',
           default: true,
         },
@@ -235,17 +247,30 @@ imestamp: event.timestamp,
         },
         dmPolicy: {
           type: 'string',
-          description: 'DM 策略: open, pairing, allowlist, disabled',
+          description: 'DM 策略: open(开放), pairing(配对), allowlist(白名单), disabled(禁用)',
           default: 'pairing',
         },
         groupPolicy: {
           type: 'string',
-          description: '群聊策略: open, allowlist, disabled',
+          description: : open(开放), allowlist(白名单), disabled(禁用)',
           default: 'open',
+        },
+        allowFrom: {
+          type: 'array',
+          description: '允许的用户 Open ID 列表',
+        },
+        groupAllowFrom: {
+          type: 'array',
+          description: '允许的群聊 ID 列表',
+        },
+        requireMention: {
+          type: 'boolean',
+          description: '群聊中是否需要 @ 才响应',
+          default: true,
         },
         streaming: {
           type: 'boolean',
-          description: '是否启用流式消息',
+          description: '是否启用流式消息（打字效果）',
           default: true,
         },
       },
@@ -253,8 +278,7 @@ imestamp: event.timestamp,
     };
   }
   
-  /**
-   * 验证配置
+  /** 验证配置
    */
   validateConfig(config: unknown): ConfigValidation {
     const errors: string[] = [];
@@ -271,6 +295,17 @@ imestamp: event.timestamp,
     
     if (!cfg.appSecret && !cfg.appSecretFile) {
       errors.push('appSecret 或 appSecretFile 是必填项');
+    }
+    
+    // 验证策略值
+    const validDmPolicies = ['open', 'pairing', 'allowlist', 'disabled'];
+    if (cfg.dmPolicy && !validDmPolicies.includes(cfg.dmPolicy as string)) {
+      errors.push(`dmPolicy 必须是: ${validDmPolicies.join(', ')}`);
+    }
+    
+    const validGroupPolicies = ['open', 'allowlist', 'disabled'];
+    if (cfg.groupPolicy && !validGroupPolicies.includes(cfg.groupPolicy as string)) {
+      errors.push(`groupPolicy 必须是: ${validGroupPolicies.join(', ')}`);
     }
     
     return {
