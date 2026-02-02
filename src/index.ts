@@ -11,6 +11,10 @@ export * from './core/index.js';
 // 导出渠道适配器
 export * from './channels/base/index.js';
 export * from './channels/qq/index.js';
+export * from './channels/feishu/index.js';
+
+// 导出 Web UI
+export * from './ui/index.js';
 
 // 版本信息
 export const VERSION = '1.0.0';

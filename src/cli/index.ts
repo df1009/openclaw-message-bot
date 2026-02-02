@@ -9,6 +9,7 @@ import { Command } from 'commander';
 import { registerChannelsCommand } from './commands/channels.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerStatusCommand } from './commands/status.js';
+import { registerUiCommand } from './commands/ui.js';
 
 const program = new Command();
 
@@ -21,6 +22,7 @@ program
 registerChannelsCommand(program);
 registerConfigCommand(program);
 registerStatusCommand(program);
+registerUiCommand(program);
 
 // 解析命令行参数
 program.parse();
