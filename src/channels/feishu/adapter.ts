@@ -1,14 +1,8 @@
 /**
  * 飞书渠道适配器
  * 
- * 实现飞书开放平台的消息收发功能
- * 
- * 功能特性：
- * - 支持私聊和群聊消息
- * - 支持图片和文件
- * - 支持流式消息（打字效果）
- * - 访问控制（白名单、配对）
- * - 基于官方 SDK (@larksuiteoapi/node-sdk)
+ * 简化版本，和 QQ Bot 保持一致的配置风格
+ * 只需要 appId 和 appSecret 即可使用
  */
 
 import type {
@@ -21,17 +15,28 @@ import type {
   InboundMessage,
 } from '../../core/types.js';
 import { BaseAdapter } from '../base/adapter.js';
-import type { FeishuConfig } from './types.js';
+import type { FeishuConfig, FeishuMessageEvent } from './types.js';
 import { FeishuWsClient } from './client.js';
 
 /**
  * 飞书适配器
+ * 
+ * 配置示例：
+ * ```json
+ * {
+ *   "feishu": {
+ *     "enabled": true,
+ *     "appId": "cli_xxx",
+ *     "appSecret": "xxx"
+ *   }
+ * }
+ * ```
  */
 export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
   readonly meta: ChannelMeta = {
     id: 'feishu',
     name: '飞书',
-    description: '飞书开放平台机器人，支持私聊和群聊',
+    description: '飞书开放平台机器人',
     version: '1.0.0',
     icon: '📱',
   };
@@ -52,7 +57,9 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       throw new Error('缺少 appSecret 配置');
     }
     
-    // 初始化 WebSocket 客户端
+    this.logger.info(`启动飞书适配器: ${appId}`);
+    
+    // 初始化客户端
     this.client = new FeishuWsClient({
       appId,
       appSecret,
@@ -89,25 +96,8 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
   /**
    * 处理收到的消息
    */
-  private async handleMessage(event: {
-    type:'group';
-    senderId: string;
-    senderName?: string;
-    chatId: string;
-    content: string;
-    messageId: string;
-    timestamp: number;
-    msgType: string;
-    mentioned?: boolean;
-    attachments?: Array<{ type: string; fileKey: string; localPath?: string }>;
-  }): Promise<void> {
-    // 访问控制检查
-    if (!this.checkAccess(event)) {
-      this.logger.debug(`消息被访问控制拦截: ${event.senderId}`);
-      return;
-    }
-    
-    // 群聊中检查是否被 @（可配置）
+  private async handleMessage(event: FeishuMessageEvent): Promise<void> {
+    // 群聊中检查是否被 @
     if (event.type === 'group') {
       const requireMention = this.config?.requireMention !== false;
       if (requireMention && !event.mentioned) {
@@ -122,7 +112,10 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       channel: 'feishu',
       senderId: event.senderId,
       senderName: event.senderName,
-      chatId: event.chatId,
+      // 为每个用户/群生成唯一的 chatId
+      chatId: event.type === 'dm' 
+        ? `user:${event.senderId}` 
+        : `group:${event.chatId}`,
       chatType: event.type === 'dm' ? 'dm' : 'group',
       content: {
         text: event.content,
@@ -135,36 +128,10 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       raw: event,
     };
     
+    this.logger.info(`收到消息: [${message.chatType}] ${message.senderId}: ${message.content.text?.substring(0, 50)}...`);
+    
     // 分发消息
     await this.dispatchMessage(message);
-  }
-  
-  /**
-   * 检查访问权限
-   */
-  private checkAccess(event: { type: 'dm' | 'group'; senderId: string; chatId: string }): boolean {
-    if (!this.config) return false;
-    
-    const { dmPolicy, groupPolicy, allowFrom, groupAllowFrom } = this.config;
-    
-    if (event.type === 'dm') {
-      // DM 访问控制
-      if (dmPolicy === 'disabled') return false;
-      if (dmPolicy === 'open') return true;
-      if (dmPolicy === 'allowlist' && allowFrom?.length) {
-        return allowFrom.includes(event.senderId);
-      }
-      // pairing 模式：允许所有人，但需要配对确认
-      return true;
-    } else {
-      // 群聊访问控制
-      if (groupPolicy === 'disabled') return false;
-      if (groupPolicy === 'open') return true;
-      if (groupPolicy === 'allowlist' && groupAllowFrom?.length) {
-        return groupAllowFrom.includes(event.chatId);
-      }
-      return true;
-    }
   }
   
   /**
@@ -180,37 +147,50 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
     }
     
     try {
-      // 解析目标类型
-      // 格式: open_id 或 chat:chat_id
-      const isChat = target.startsWith('oc_') || target.startsWith('chat:');
-      const receiveIdType = isChat ? 'chat_id' : 'open_id';
-      const receiveId = target.replace('chat:', '');
+      // 解析目标类型: user:xxx 或 group:xxx
+      let receiveIdType: 'open_id' | 'chat_id' = 'open_id';
+      let receiveId = target;
+      
+      if (target.startsWith('user:')) {
+        receiveId = target.replace('user:', '');
+        receiveIdType = 'open_id';
+      } else if (target.startsWith('group:')) {
+        receiveId = target.replace('group:', '');
+        receiveIdType = 'chat_id';
+      } else if (target.startsWith('oc_')) {
+        // chat_id 格式
+        receiveIdType = 'chat_id';
+      }
       
       let messageId: string | undefined;
       
       // 发送文本
       if (content.text) {
-        // 如果有 replyTo，使用回复
         if (options?.replyTo) {
           const result = await this.client.replyText(options.replyTo, content.text);
           messageId = result.messageId;
         } else {
-          const result = await this.client.sendText(receiveId, content.text, receiveIdType);
+       onst result = await this.client.sendText(receiveId, content.text, receiveIdType);
           messageId = result.messageId;
         }
       }
       
       // 发送图片
       if (content.images?.length) {
+        const fs = await import('node:fs');
         for (const imagePath of content.images) {
-          // 如果是本地路径，需要先上传
-          if (imagePath.startsWith('/') || imagePath.startsWith('.')) {
-            const fs = await import('node:fs');
-            const buffer = fs.readFileSync(imagePa       const imageKey = await this.client.uploadImage(buffer);
-            await this.client.sendImage(receiveId, imageKey, receiveIdType);
-          } else {
-            // 假设是 image_key
-            await this.client.sendImage(receiveId, imagePath, receiveIdType);
+          try {
+            if (imagePath.startsWith('/') || imagePath.startsWith('.')) {
+              // 本地文件，先上传
+              const buffer = fs.readFileSync(imagePath);
+              const imageKey = await this.client.uploadImage(buffer);
+              await this.client.sendImage(receiveId, imageKey, receiveIdType);
+            } else {
+              // 已经是 image_key
+              await this.client.sendImage(receiveId, imagePath, receiveIdType);
+            }
+          } catch (err) {
+            this.logger.error(`发送图片失败: ${err}`);
           }
         }
       }
@@ -230,7 +210,7 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       type: 'object',
       properties: {
         enabled: {
-          typ'boolean',
+          type: 'boolean',
           description: '是否启用',
           default: true,
         },
@@ -245,40 +225,22 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
           required: true,
           sensitive: true,
         },
-        dmPolicy: {
+        systemPrompt: {
           type: 'string',
-          description: 'DM 策略: open(开放), pairing(配对), allowlist(白名单), disabled(禁用)',
-          default: 'pairing',
-        },
-        groupPolicy: {
-          type: 'string',
-          description: : open(开放), allowlist(白名单), disabled(禁用)',
-          default: 'open',
-        },
-        allowFrom: {
-          type: 'array',
-          description: '允许的用户 Open ID 列表',
-        },
-        groupAllowFrom: {
-          type: 'array',
-          description: '允许的群聊 ID 列表',
+          description: '系统提示词',
         },
         requireMention: {
           type: 'boolean',
           description: '群聊中是否需要 @ 才响应',
           default: true,
         },
-        streaming: {
-          type: 'boolean',
-          description: '是否启用流式消息（打字效果）',
-          default: true,
-        },
-      },
+ },
       required: ['appId', 'appSecret'],
     };
   }
   
-  /** 验证配置
+  /**
+   * 验证配置
    */
   validateConfig(config: unknown): ConfigValidation {
     const errors: string[] = [];
@@ -297,25 +259,12 @@ export class FeishuAdapter extends BaseAdapter<FeishuConfig> {
       errors.push('appSecret 或 appSecretFile 是必填项');
     }
     
-    // 验证策略值
-    const validDmPolicies = ['open', 'pairing', 'allowlist', 'disabled'];
-    if (cfg.dmPolicy && !validDmPolicies.includes(cfg.dmPolicy as string)) {
-      errors.push(`dmPolicy 必须是: ${validDmPolicies.join(', ')}`);
-    }
-    
-    const validGroupPolicies = ['open', 'allowlist', 'disabled'];
-    if (cfg.groupPolicy && !validGroupPolicies.includes(cfg.groupPolicy as string)) {
-      errors.push(`groupPolicy 必须是: ${validGroupPolicies.join(', ')}`);
-    }
-    
-    return {
-      valid: errors.length === 0,
-      errors,
+        valid: errors.length ===      errors,
     };
   }
   
   /**
-   * 获取 WebSocket 客户端（供外部调用）
+   * 获取客户端
    */
   getClient(): FeishuWsClient | null {
     return this.client;

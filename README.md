@@ -1,15 +1,14 @@
 # OpenClaw Message Bot
 
-统一的多渠道消息机器人平台，支持 QQ、飞书、微信、企业微信等。
+统一的多渠道消息机器人平台，支持 QQ 和飞书。
 
 ## ✨ 特性
 
 - 🐧 **QQ Bot** - 支持私聊、群聊、频道消息
-- 📱 **飞书** - 支持私聊、群聊（开发中）
-- 💬 **微信** - 计划中
-- 🏢 **企业微信** - 计划中
-- 🔧 **CLI 工具** - 命令行配置和管理
-- 🖥️ **Web 界面** - 可视化控制（开发中）
+- 📱 **飞书** - 支持私聊、群聊消息
+- 🔧 **简单配置** - 只需 AppID 和 AppSecret
+- 🖥️ **CLI 工具** - 命令行配置和管理
+- 🌐 **Web 界面** - 可视化控制
 
 ## 🚀 快速开始
 
@@ -29,11 +28,62 @@ message-bot channels add qq
 message-bot channels add qq --token "AppID:AppSecret"
 ```
 
+### 配置飞书
+
+```bash
+# 交互式配置
+message-bot channels add feishu
+
+# 或直接指定参数
+message-bot channels add feishu --token "AppID:AppSecret"
+```
+
 ### 启动服务
 
 ```bash
 message-bot start
 ```
+
+## 📖 配置说明
+
+### QQ Bot 配置
+
+```json
+{
+  "channels": {
+    "qq": {
+      "enabled": true,
+      "appId": "你的AppID",
+      "clientSecret": "你的AppSecret"
+    }
+  }
+}
+```
+
+**获取凭证：**
+1. 访问 QQ 开放平台
+2. 创建机器人应用
+3. 获取 AppID 和 AppSecret
+
+### 飞书配置
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_xxx",
+      "appSecret": "你的AppSecret"
+    }
+  }
+}
+```
+
+**获取凭证：**
+1. 访问飞书开放平台
+2. 创建企业自建应用
+3. 获取 App ID 和 App Secret
+4. 开启机器人能力
 
 ## 📖 CLI 命令
 
@@ -48,34 +98,28 @@ message-bot channels disable <channel> # 禁用渠道
 # 配置管理
 message-bot config show                # 显示配置
 message-bot config path                # 显示配置路径
-message-bot config reset               # 重置配置
 
 # 服务管理
 message-bot start                      # 启动服务
 message-bot stop                       # 停止服务
 message-bot status                     # 查看状态
+
+# Web 界面
+message-bot ui                         # 启动 Web 控制界面
 ```
 
-## 📁 项目结构
+## 📁 配置文件位置
 
-```
-src/
-├── core/                 # 核心框架
-│   ├── types.ts          # 类型定义
-│   ├── logger.ts         # 日志工具
-│   ├── config-manager.ts # 配置管理
-│   └── channel-manager.ts # 渠道管理
-├── channels/             # 渠道适配器
-│   ├── base/             # 基础适配器
-│   ├── qq/               # QQ Bot
-│   └── feishu/           # 飞书
-└── cli/                  # 命令行工具
-    └── commands/         # CLI 命令
-```
+- macOS/Linux: `~/.openclaw-message-bot/config.json`
+- Windows: `%USERPROFILE%\.openclaw-message-bot\config.json`
 
 ## 🔧 开发
 
 ```bash
+# 克隆项目
+git clone https://github.com/df1009/openclaw-message-bot.git
+cd openclaw-message-bot
+
 # 安装依赖
 npm install
 
@@ -84,9 +128,6 @@ npm run build
 
 # 开发模式
 npm run dev
-
-# 运行测试
-npm test
 ```
 
 ## 📄 License

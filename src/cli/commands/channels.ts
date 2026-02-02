@@ -2,6 +2,7 @@
  * 渠道管理命令
  * 
  * 提供渠道的添加、删除、列表等功能
+ * QQ 和飞书使用相同的简单配置方式
  */
 
 import type { Command } from 'commander';
@@ -35,16 +36,22 @@ export function registerChannelsCommand(program: Command): void {
       
       console.log(chalk.bold('\n已配置的渠道:\n'));
       
+      const icons: Record<string, string> = {
+        qq: '🐧',
+        feishu: '📱',
+      };
+      
       for (const id of channelIds) {
         const config = configManager.getChannelConfig(id);
         const enabled = config?.enabled !== false;
         const status = enabled 
           ? chalk.green('✓ 已启用') 
           : chalk.red('✗ 已禁用');
+        const icon = icons[id] || '📦';
         
-        console.log(`  ${chalk.cyan(id)} ${status}`);
+        console.log(`  ${icon} ${chalk.cyan(id)} ${status}`);
         if (config?.name) {
-          console.log(`    名称: ${config.name}`);
+          console.log(`     名称: ${config.name}`);
         }
       }
       
@@ -74,22 +81,14 @@ export function registerChannelsCommand(program: Command): void {
             choices: [
               { name: '🐧 QQ Bot', value: 'qq' },
               { name: '📱 飞书', value: 'feishu' },
-              { name: '💬 微信 (开发中)', value: 'wechat', disabled: true },
-              { name: '🏢 企业微信 (开发中)', value: 'wecom', disabled: true },
             ],
           },
         ]);
         channelId = channel;
       }
       
-      // 根据渠道类型收集配置
-      let config: Record<string, unknown> = { enabled: true };
-      
-      if (channelId === 'qq') {
-        config = await collectQQConfig(options);
-      } else if (channelId === 'feishu') {
-        config = await collectFeishuConfig(options);
-      }
+      // 收集配置（QQ 和飞书使用相同的方式）
+      const config = await collectConfig(channelId, options);
       
       // 保存配置
       await configManager.setChannelConfig(channelId, config);
@@ -132,7 +131,7 @@ export function registerChannelsCommand(program: Command): void {
       console.log(chalk.green(`✓ 渠道 ${channelId} 已删除`));
     });
   
-  // 启用/禁用渠道
+  // 启用渠道
   channels
     .command('enable <channel>')
     .description('启用渠道')
@@ -146,13 +145,14 @@ export function registerChannelsCommand(program: Command): void {
         return;
       }
       
-      await configManager.setChannelConfig(channelId, { ...config, enabled: true });
+      await configManager.setChannelConfig(channelId, { ...cig, enabled: true });
       console.log(chalk.green(`✓ 渠道 ${channelId} 已启用`));
     });
   
+  // 禁用渠道
   channels
     .command('disable <channel>')
-    .descripti用渠道')
+    .description('禁用渠道')
     .action(async (channelId) => {
       const configManager = getConfigManager();
       await configManager.load();
@@ -169,74 +169,35 @@ export function registerChannelsCommand(program: Command): void {
 }
 
 /**
- * 收集 QQ 配置
+ * QQ 和飞书使用相同的配置方式
  */
-async function collectQQConfig(options: Record<string, unknown>): Promise<Record<string, un{
+async function collectConfig(
+  channelId: string,
+  options: Record<string, unknown>
+): Promise<Record<string, unknown>> {
   let appId = options.appId as string | undefined;
-  let clientSecret = options.appSecret as string | undefined;
+  let appSecret = options.appSecret as string | undefined;
   
-  // 解析 token 格式
+  // 解析 token 格式 (AppID:AppSecret)
   if (options.token) {
     const parts = (options.token as string).split(':');
     if (parts.length === 2) {
       appId = parts[0];
-      clientSecret = parts[1];
+      appSecret = parts[1];
     }
   }
   
-  // 交互式输入
-  if (!appId || !clientSecret) {
-    console.log(chalk.cyan('\n配置 QQ Bot:\n'));
-    
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'appId',
-        message: 'App ID:',
-        when: !appId,
-        validate: (input) => input.length > 0 || '请输入 App ID',
-      },
-      {
-        type: 'password',
-        name: 'clientSecret',
-        message: 'App Secret:',
-        when: !clientSecret,
-        validate: (input) => input.length > 0 || '请输入 App Secret',
-      },
-      {
-        type: 'input',
-        name: 'imageServerBaseUrl',
-        message: '图床服务器地址 (可选，用于发送图片):',
-      },
-    ]);
-    
-    appId = appId || answers.appId;
-    clientSecret = clientSecret || answers.clientSecret;
-    
-    return {
-      enabled: true,
-      appId,
-      clientSecret,
-      imageServerBaseUrl: answers.imageServerBaseUrl || undefined,
-    };
-  }
-  
-  return {
-    enabled: true,
-    appId,
-    clientSecret,
+  // 渠道名称映射
+  const channelNames: Record<string, string> = {
+    qq: 'QQ Bot',
+    feishu: '飞书',
   };
-}
-
-/**
- * 收集飞书配置
- */
-async function collectFeishuConfig(options: Record<string, unknown>): Promise<Record<string, unknown>> {
-  let appId = options.appId as string | undefined;
-  let appSecret = options.appSecret as string | undefined;
   
+  const channelName = channelNames[channelId] || channelId;
+  
+  // 交互式输入
   if (!appId || !appSecret) {
-    console.log(chalk.cyan('\n配置飞书:\n'));
+    console.log(chalk.cyan(`\n配置 ${channelName}:\n`));
     
     const answers = await inquirer.prompt([
       {
@@ -259,6 +220,22 @@ async function collectFeishuConfig(options: Record<string, unknown>): Promise<Re
     appSecret = appSecret || answers.appSecret;
   }
   
+  // 根据渠道类型返回配置
+  if (channelId === 'q) {
+    return {
+      enabled: true,
+      appId,
+      clientSecret: appSecret,
+    };
+  } else if (channelId === 'feishu') {
+    return {
+      enabled: true,
+      appId,
+      appSecret,
+    };
+  }
+  
+  // 默认配置
   return {
     enabled: true,
     appId,
